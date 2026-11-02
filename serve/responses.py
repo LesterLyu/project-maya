@@ -8,6 +8,7 @@ import uuid
 
 from serve.response_store import ResponseStore  # compatibility import for existing callers
 from serve.response_schema import ResponseValidation, OutputValidationError
+from serve.response_tools import ToolTransport
 
 
 def _string(value, name, *, empty=False):
@@ -37,8 +38,8 @@ def _content(value, name, *, assistant=False):
         if kind in ("input_text", "output_text"):
             parts.append({"type": "input_text", "text": _string(part.get("text"), name + ".text", empty=True)})
         elif kind == "input_image" and not assistant:
-            if part.get("detail", "auto") != "auto":
-                raise ValueError("input_image.detail: only auto is supported")
+            if part.get("detail", "auto") not in ("auto", "low", "high", "original"):
+                raise ValueError("unsupported input_image.detail")
             parts.append({"type": "input_image", "image_url": _string(part.get("image_url"), name + ".image_url")})
         else:
             raise ValueError(f"unsupported {name} content type: {kind!r}")
@@ -102,6 +103,7 @@ def normalize_request(req):
     The template represents tool results by order, so validate call IDs here and reorder
     each complete group of results to its calls' order before those IDs are stripped.
     """
+    req = ToolTransport(req).request()
     allowed = {"model", "input", "instructions", "tools", "tool_choice", "parallel_tool_calls", "reasoning",
                "max_output_tokens", "temperature", "top_p", "stream", "store", "metadata", "previous_response_id",
                "background", "text", "truncation", "include", "service_tier", "prompt_cache_key", "client_metadata",
@@ -137,17 +139,21 @@ def normalize_request(req):
     if top is not None and (type(top) is not int or not 0 <= top <= 20):
         raise ValueError("top_logprobs must be an integer from 0 to 20")
     if include not in (None, []):
-        no_reasoning = isinstance(req.get("reasoning"), dict) and req["reasoning"].get("effort") == "none"
-        if include != ["reasoning.encrypted_content"] or not no_reasoning:
-            raise ValueError("encrypted reasoning projection is only accepted with reasoning.effort=none; encryption is unavailable")
+        if include != ["reasoning.encrypted_content"]:
+            raise ValueError("unsupported include projection")
     if req.get("service_tier", "auto") != "auto":
         raise ValueError("service_tier: only auto is supported")
     reasoning = req.get("reasoning")
     if reasoning is not None:
-        if not isinstance(reasoning, dict) or set(reasoning) - {"effort", "summary"}:
-            raise ValueError("reasoning: only effort is supported")
-        if reasoning.get("summary") is not None:
-            raise ValueError("reasoning.summary is not supported; reasoning is returned as reasoning_text")
+        if not isinstance(reasoning, dict) or set(reasoning) - {"effort", "summary", "context"}:
+            raise ValueError("reasoning accepts effort, summary and context")
+        if reasoning.get("context") is not None and not isinstance(reasoning["context"], str):
+            raise ValueError("reasoning.context must be a string")
+        # Codex may request a summary even when the model has no separate
+        # summarizer. Accept the API's styles as presentation hints, as Basalt
+        # does; keep returning the model's reasoning_text and replay token.
+        if reasoning.get("summary") not in (None, "auto", "concise", "detailed"):
+            raise ValueError("reasoning.summary must be auto, concise, detailed or null")
     metadata = req.get("metadata")
     if metadata is not None and (not isinstance(metadata, dict) or len(metadata) > 16 or any(
             not isinstance(k, str) or len(k) > 64 or not isinstance(v, str) or len(v) > 512
@@ -300,6 +306,14 @@ def response_usage(data, prompt_tokens):
 
 
 def response_events(model, req, run, prompt_tokens=0, persist=None, response_id=None, validation=None, cancel=None):
+    transport = ToolTransport(req)
+    save = (lambda response: persist(transport.response(response))) if persist is not None else None
+    events = _response_events(model, transport.request(), transport.canonical_events(run), prompt_tokens,
+                              save, response_id, validation, cancel)
+    yield from transport.events(events)
+
+
+def _response_events(model, req, run, prompt_tokens=0, persist=None, response_id=None, validation=None, cancel=None):
     """Serialize engine events directly, with one item lifecycle and one terminal response event."""
     response = new_response(model, req, response_id)
     if validation is not None:

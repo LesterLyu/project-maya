@@ -92,8 +92,10 @@ class ResponseValidation:
     VALIDATION_SECONDS = 1
     def __init__(self, req):
         text = req.get("text") if req.get("text") is not None else {}
-        if not isinstance(text, dict) or set(text) - {"format"}:
-            raise ValueError("text accepts only format")
+        if not isinstance(text, dict) or set(text) - {"format", "verbosity"}:
+            raise ValueError("text accepts only format and verbosity")
+        if text.get("verbosity") not in (None, "low", "medium", "high"):
+            raise ValueError("unsupported text.verbosity")
         self.format = text.get("format") if text.get("format") is not None else {"type": "text"}
         if not isinstance(self.format, dict):
             raise ValueError("text.format must be an object")

@@ -206,14 +206,13 @@ class Responses(ResponseCase):
     def test_invalid_and_unsupported_requests_fail_before_generation(self):
         cases = [
             {"store": "true"}, {"previous_response_id": []}, {"background": True},
-            {"tools": [{"type": "web_search"}]}, {"tools": [{**TOOLS[0], "strict": True}]},
+            {"tools": [{"type": "unknown_hosted_tool"}]}, {"tools": [{**TOOLS[0], "strict": True}]},
             {"tools": {}}, {"input": [{"type": "item_reference", "id": "msg_old"}]},
             {"input": [{"role": "user", "content": [{"type": "input_file", "file_id": "f"}]}]},
             {"input": [{"type": "function_call_output", "call_id": "missing", "output": "value"}]},
             {"input": [{"type": "function_call", "call_id": "c", "name": "lookup", "arguments": "{}"}]},
             {"input": [{"role": "user", "content": [{"type": "input_image", "image_url": "url", "detail": "high"}]}]},
-            {"text": {"format": {"type": "json_schema"}}}, {"reasoning": {"summary": "auto"}},
-            {"include": ["reasoning.encrypted_content"], "reasoning": {"effort": "low"}},
+            {"text": {"format": {"type": "json_schema"}}}, {"reasoning": {"summary": "invalid"}},
             {"max_output_tokens": 0}, {"max_output_tokens": True}, {"stream": "true"},
             {"truncation": "auto"}, {"conversation": "conv_1"}, {"input": None}, {"input": []},
             {"tool_choice": "required"}, {"tools": TOOLS, "tool_choice": {"type": "function", "name": "missing"}},

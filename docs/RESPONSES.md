@@ -28,8 +28,9 @@ print(response.output_text)
 - String `input`, or a full history containing user, assistant, system and developer
   messages. `instructions` supplies system instructions for this request.
 - `input_text`, `output_text` in history, and `input_image` with an `image_url`
-  (including data URLs). Images use the configured vision encoder; only the `auto`
-  detail mode is supported. Function results may contain text and image parts.
+  (including data URLs). `auto`, `low`, `high` and `original` detail values are accepted;
+  the configured vision encoder and its token budget still determine image processing.
+  Function results may contain text and image parts.
 - Function tools with `name`, `description`, `parameters`, and optional `strict`.
   `tool_choice` accepts `auto`, `none`, `required`, or `{"type":"function","name":"..."}`.
   Calls to undeclared or disallowed functions fail the response. Required/named
@@ -42,9 +43,21 @@ print(response.output_text)
 - `function_call` output and `function_call_output` history, matched by `call_id`.
   A group of function results can arrive in a different order from its calls.
   All calls need their results in the input before generation can continue.
+- Codex namespaces, custom/freeform tools (including Code Mode and `apply_patch`),
+  and their `custom_tool_call` / `custom_tool_call_output` replay. Internally a custom
+  input is a JSON string parameter; the public API returns the raw string and matching
+  custom-input SSE events. Grammar declarations are included in the model's tool
+  instructions, not enforced by constrained decoding.
+- Client-executed `tool_search`, its results and `additional_tools` declarations.
+  OpenAI-hosted tools are not executed: their automatic declarations are left out
+  of the model's tools, as in Basalt; forcing an unsupported hosted tool is rejected.
 - `reasoning.effort`, `temperature`, `top_p`, `max_output_tokens`, and `metadata`.
   Reasoning is returned as a `reasoning` item with `reasoning_text` content, and
   can be replayed in history. It is plain model reasoning, not a generated summary.
+  `reasoning.summary` accepts `auto`, `concise`, `detailed`, or `null` as a client
+  presentation hint, including from Codex. There is no separate summarizer: the
+  model's reasoning remains `reasoning_text`, with an empty summary array and the
+  same replay behavior. This hint does not change the reasoning effort or prompt.
 - SSE response/item/content lifecycles, text and function-argument deltas, and final
   usage. Hitting the output limit yields `response.incomplete` with
   `incomplete_details.reason="max_output_tokens"`; an engine failure yields
@@ -54,9 +67,12 @@ print(response.output_text)
   echoed in the response. Native prompt-prefix reuse determines actual cache hits;
   the hint does not partition or force the engine cache. String-valued
   `client_metadata` is accepted as diagnostic context and is not stored or echoed.
-- The `include:["reasoning.encrypted_content"]` projection is accepted only with
-  explicit `reasoning.effort:"none"`, when there are no reasoning items to encrypt.
-  Encryption and encrypted reasoning input remain unsupported.
+- `include:["reasoning.encrypted_content"]` returns a `maya.r1:` opaque replay token
+  so Codex can return reasoning on the next tool turn. It is base64-encoded JSON,
+  **not encryption**, and must be treated as plaintext. Only Maya's own replay
+  tokens can be decoded; foreign encrypted reasoning is rejected. `text.verbosity`
+  and the Responses Lite `reasoning.context` string are accepted as client hints;
+  the model's configured template and sampling policy remain authoritative.
 - `include:["message.output_text.logprobs"]` and `top_logprobs` (0-20; either one
   asks) return token log-probabilities in the message's `output_text` part and its
   `response.output_text.delta` / `.done` events, on the DeepSeek engine only (another
@@ -284,9 +300,10 @@ history without recursive parent lookups.
 Unsupported parameters and item types return HTTP 400 before generation. In particular:
 
 - the Conversations API, item references, and WebSocket transport;
-- hosted/custom tools, encrypted reasoning, reasoning summaries, files and audio;
+- executing OpenAI-hosted tools, foreign encrypted reasoning, generated reasoning
+  summaries, files and audio;
 - token-level constrained decoding, unsupported JSON Schema keywords, automatic
-  input truncation, and non-default service tiers. Namespace tools remain unsupported.
+  input truncation, and non-default service tiers.
 
 Use `/v1/chat/completions` for Maya-specific extensions such as `return_progress`
 and `strata_mcp`. The `/v1/status` dialect list advertises the Responses endpoint.
