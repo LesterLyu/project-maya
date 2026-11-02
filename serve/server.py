@@ -1949,6 +1949,23 @@ def child_env(cfg: dict) -> dict:
     return env
 
 
+def monitor_gpus(cfg: dict) -> list[int]:
+    """Physical cards sampled by telemetry, including a helper outside the model's device list."""
+    indices = gpu_list(cfg)
+    env = child_env(cfg)
+    helper = next((env[k] for k in ("MAYA_DS4_HELPER", "STRATA_DS4_HELPER", "DS4_HELPER") if k in env), None)
+    if helper is None or not str(helper).isdigit():
+        return indices
+    index = int(helper)
+    visible = env.get("HIP_VISIBLE_DEVICES" if cfg.get("backend") == "hip" else "CUDA_VISIBLE_DEVICES")
+    if visible is not None:
+        devices = [v.strip() for v in visible.split(",")]
+        if index >= len(devices) or not devices[index].isdigit():
+            return indices
+        index = int(devices[index])
+    return list(dict.fromkeys([*indices, index]))
+
+
 class ByteTokenizer:
     """Tiny stand-in tokenizer for tests without the pack: one id per UTF-8 byte, specials as ids >= 256."""
     SPECIALS = ["<|im_start|>", "<|im_end|>", "<|endoftext|>", "<|vision_start|>", "<|image_pad|>", "<|vision_end|>"]
@@ -6069,7 +6086,7 @@ def main() -> int:
     if svc.cors_origins:
         print("[maya] browser pages allowed to call /v1/* (CORS): " + ", ".join(svc.cors_origins), flush=True)
     svc.gpu_index = (gpu_list(cfg) or [0])[0]           # the Monitor reads the card the engine runs on (issue #51)
-    svc.gpu_indices = gpu_list(cfg)                     # ... or every card of a layer split (issue #112)
+    svc.gpu_indices = monitor_gpus(cfg)                 # includes a helper outside the model's layer devices
     svc.backend = cfg.get("backend")                    # the Monitor's GPU reader: sysfs on AMD/HIP, NVML otherwise
     svc.model_label = maya_quants.config_label(cfg)     # (configs of every release: by their installer record)
     if a.config:

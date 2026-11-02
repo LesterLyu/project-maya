@@ -530,6 +530,26 @@ class GpuMap(unittest.TestCase):
         self.assertEqual(eng.vram, [self.r, other])
 
 
+class MonitorGpus(unittest.TestCase):
+    def test_helper_visibility_mapping_does_not_change_layer_devices(self):
+        from unittest import mock
+        from serve.server import monitor_gpus
+        cfg = {"gpu": [0], "env": {"CUDA_VISIBLE_DEVICES": "0,2", "DS4_HELPER": "1"}}
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(monitor_gpus(cfg), [0, 2])
+        self.assertEqual(cfg["gpu"], [0])
+
+    def test_helper_aliases_and_no_helper(self):
+        from unittest import mock
+        from serve.server import monitor_gpus
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(monitor_gpus({"gpu": [1, 0]}), [1, 0])
+            cfg = {"gpu": [0], "env": {"CUDA_VISIBLE_DEVICES": "0,1", "MAYA_DS4_HELPER": "1"}}
+            self.assertEqual(monitor_gpus(cfg), [0, 1])
+            cfg["env"]["CUDA_VISIBLE_DEVICES"] = "GPU-main,GPU-helper"
+            self.assertEqual(monitor_gpus(cfg), [0])
+
+
 class GpuRelease(unittest.TestCase):
     """A reload starts the new engine only once the GPUs have dropped the old one (its memory is freed after it ends)."""
 
