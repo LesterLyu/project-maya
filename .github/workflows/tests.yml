@@ -37,6 +37,10 @@ jobs:
         run: |
           c++ -std=c++20 -O2 -DNDEBUG -Wall -Wextra -Werror tests/glm_memory_test.cpp -o "$RUNNER_TEMP/glm_memory_test"
           "$RUNNER_TEMP/glm_memory_test"
+      - name: Host registration budget and range checks (CPU only)
+        run: |
+          c++ -std=c++20 -O2 -DNDEBUG -Wall -Wextra -Werror -Iinclude tests/host_pin_policy_test.cpp -o "$RUNNER_TEMP/host_pin_policy_test"
+          "$RUNNER_TEMP/host_pin_policy_test"
       - name: Server tests
         run: '"$RUNNER_TEMP/venv/bin/python" -m unittest discover -s serve -p "test_*.py" -t .'
       - name: Installer and tools tests

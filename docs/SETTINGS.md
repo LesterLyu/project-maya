@@ -723,6 +723,14 @@ tokens/s.
 | `MAYA_DS4_PIN_ROOM_GB` | 1 | with `MAYA_DS4_PIN_LAST`: the room left lockable for what the engine pins later |
 | `DS4_COPY_FAIR` | on (with RAM copies) | `0`: the copy budget takes the experts in one global most-routed order, as before. On: each layer's most-routed experts interleave round-robin, so the budget covers every layer once before it deepens any - a token crosses every layer, and a colder layer with no copied expert at all disk-reads on each of its picks (measured on 2x RTX 3080 + 96 GB RAM, a 155 GB GGUF with 61% of the CPU-lane experts copied: long generations about 3x faster with the fair interleave than over the global order). |
 
+On Windows with NVIDIA/WDDM, copied experts are registered only within the visible
+adapters' DXGI non-local budgets (portable mappings use the smallest allowance,
+with 5% or at least 1 GiB reserved). Successful layer/NUMA arenas remain registered;
+a layer uses direct prompt DMA only when every part is registered. Other layers
+use the existing pinned staging buffers. The RAM copy budget is unchanged, and
+the load logs RAM bytes and registered bytes separately. TCC and other platforms
+retain their existing registration policy.
+
 ## DeepSeek: long prompts read without the second half's work
 
 DeepSeek-V4.1-Flash's layers 20-39 see the earlier tokens of a prompt only through what layer 20 keeps of them (its

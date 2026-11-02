@@ -45,6 +45,7 @@
 #include "strata/kernels/glm_fast.hpp"
 #include "strata/kernels/sampler.hpp"
 #include "strata/platform/dedicated.hpp"
+#include "strata/platform/host_pin.hpp"
 #include "strata/platform/idle_gate.hpp"
 
 #include <cublas_v2.h>
@@ -5376,7 +5377,8 @@ struct Model::Impl {
     // runs - the readers gathering only a member's blocks of the down (mx_down_member); else a member's part staged as
     // its layout (read_mx_part, one DMA), alone the blob (read_mx) or an EXL3 expert's file region, as before
     bool stream_direct(const Layer& l, int e) const {
-        return cp_dma && l.lay.fmt == gg::kFmtMXFP4 && !l.ram.empty() && l.ram[(size_t) e] >= 0;
+        return cp_dma && (cp_dma_layer.empty() || cp_dma_layer[(size_t) l.il]) &&
+               l.lay.fmt == gg::kFmtMXFP4 && !l.ram.empty() && l.ram[(size_t) e] >= 0;
     }
     bool stage_needed(const Layer& l, int e) const { return !stream_direct(l, e) || l.nm > 1; }
     bool stage_streamed(const Layer& l, int mi, int e, uint8_t* si) const {
@@ -8087,9 +8089,90 @@ struct Model::Impl {
     // tp 8 (orcarouter's Mix-256G), the 72 readers ~33 GB/s together, the prompt's limit (nsys: each member's thread
     // staging ~20 of 38 s).  All or none (DS4_COPY_PIN=0: none - the staging, as before); zc_pin's chunks count
     bool cp_dma = false;
+    std::vector<char> cp_dma_layer;   // partial Windows registration: every NUMA part of this layer must be pinned
+    bool cp_pin_windows() {
+#if defined(_WIN32) && !defined(STRATA_USE_HIP)
+        int count = 0;
+        if (cudaGetDeviceCount(&count) != cudaSuccess) { cudaGetLastError(); return true; }
+        uint64_t limit = UINT64_MAX;
+        std::string reason;
+        bool wddm = false;
+        for (int device = 0; device < count; ++device) {
+            cudaDeviceProp prop{};
+            if (cudaGetDeviceProperties(&prop, device) != cudaSuccess) { cudaGetLastError(); return true; }
+            if (prop.tccDriver) continue;
+            wddm = true;
+            uint64_t remaining = 0;
+            std::string note;
+            if (!strata::platform::nonlocal_pin_budget(prop.luid, prop.luidDeviceNodeMask, count > 1, remaining, note)) {
+                std::fprintf(stderr, "ds4: Windows host registration budget unavailable: copied RAM uses staging\n");
+                return true;
+            }
+            if (remaining < limit) { limit = remaining; reason = "CUDA" + std::to_string(device) + " " + note; }
+        }
+        if (!wddm) return false;   // TCC retains the existing driver/probe policy
+        const double t0 = now_ms();
+        const size_t nc = ram_chunks.size();
+        zc_chunk.resize(nc, 0);
+        std::vector<size_t> mine;
+        uint64_t left = limit;
+        const unsigned flags = copy_pin_flags(cudaHostRegisterPortable);
+        // Maya's arenas are already separate per layer/NUMA part. Register only
+        // whole arenas within the portable allowance, retaining successful ones.
+        for (size_t c = 0; c < nc; ++c) {
+            if (zc_chunk[c] || ram_chunk_bytes[c] > left) continue;
+            if (cudaHostRegister(ram_chunks[c], ram_chunk_bytes[c], flags) != cudaSuccess) {
+                cudaGetLastError();
+                break;
+            }
+            zc_chunk[c] = 1;
+            mine.push_back(c);
+            left -= ram_chunk_bytes[c];
+        }
+        // Preserve the existing later-buffer probe as an additional guard. Give
+        // back only this attempt's pins, one arena at a time, if it needs room.
+        while (cp_pin_last() && !pin_room() && !mine.empty()) {
+            const size_t c = mine.back();
+            mine.pop_back();
+            cudaHostUnregister(ram_chunks[c]);
+            zc_chunk[c] = 0;
+            cudaGetLastError();
+        }
+        cp_dma_layer.assign(L.size(), 0);
+        size_t layers = 0;
+        for (const Layer& l : L) {
+            const auto slot = std::find_if(l.ram.begin(), l.ram.end(), [](int v) { return v >= 0; });
+            if (slot == l.ram.end()) continue;
+            bool pinned = true;
+            for (int part = 0; part < NH; ++part) {
+                const uintptr_t pointer = (uintptr_t) ram_part[(size_t) *slot][(size_t) part];
+                bool covered = false;
+                for (size_t c = 0; c < nc; ++c)
+                    covered = covered || (zc_chunk[c] && strata::platform::host_pin_range(
+                        (uintptr_t) ram_chunks[c], ram_chunk_bytes[c], pointer, cp_lay[(size_t) l.il][3]));
+                pinned = pinned && covered;
+            }
+            cp_dma_layer[(size_t) l.il] = pinned;
+            layers += pinned;
+        }
+        cp_dma = layers > 0;
+        double pinned = 0, total = 0;
+        for (size_t c = 0; c < nc; ++c) {
+            total += double(ram_chunk_bytes[c]);
+            if (zc_chunk[c]) pinned += double(ram_chunk_bytes[c]);
+        }
+        std::fprintf(stderr, "ds4: Windows copied experts: %.2f / %.2f GB registered, %zu layers DMA directly; "
+                             "the rest staged (%.1f s); %s\n", pinned / 1e9, total / 1e9, layers,
+                             (now_ms() - t0) / 1000.0, reason.c_str());
+        return true;
+#else
+        return false;
+#endif
+    }
     void cp_pin() {
         if (!copy_mode || chunk <= 0 || ram_chunks.empty()) return;
         if (const char* v = std::getenv("DS4_COPY_PIN"); v != nullptr && std::atoi(v) == 0) return;
+        if (cp_pin_windows()) return;
         const double t0 = now_ms();
         const size_t nc = ram_chunks.size();
         zc_chunk.resize(nc, 0);

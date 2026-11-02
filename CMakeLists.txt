@@ -291,6 +291,13 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/env_report_test.cpp")
   add_test(NAME env_report_test COMMAND env_report_test)
 endif()
 
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/host_pin_policy_test.cpp")
+  add_executable(host_pin_policy_test EXCLUDE_FROM_ALL tests/host_pin_policy_test.cpp)
+  target_include_directories(host_pin_policy_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+  target_link_libraries(host_pin_policy_test PRIVATE strata_warnings)
+  add_test(NAME host_pin_policy_test COMMAND host_pin_policy_test)
+endif()
+
 # ---- idle_gate_test --------------------------------------------------------
 # The gate an idle engine's service threads sleep on, and a request's line wakes (strata/platform/idle_gate.hpp):
 # host code only, like env_report_test above.
