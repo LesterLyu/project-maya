@@ -1,5 +1,8 @@
 <h1 align="center">Project Maya</h1>
 
+**Fork notes:** This fork adds Windows host-registration safeguards, helper GPU
+monitoring, and Codex Responses compatibility. See [changes and validation](docs/FORK.md).
+
 <p align="center"><b>GLM-5.3-Flash (321 B), DeepSeek-V4.1-Flash-1017 (748 B) and MiniMax-M3.1-Flash (428 B) on your own GPU</b><br>
 private and fast · one NVIDIA GPU or up to 16 · AMD and Windows (experimental) · chat, pictures, OpenAI- and
 Anthropic-compatible API · several requests at once</p>
